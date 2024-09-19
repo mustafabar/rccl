@@ -27,9 +27,7 @@ static mutex rankStatesMutex;
 static unordered_map<int, shared_ptr<mscclRankState>> rankStates;
 
 static inline mscclRankState& mscclGetRankState(int rank) {
-  // Negative rank is unlikely, but in this case, 
-  // return a per thread pointer
-  // to be managed by the caller
+  // In the unlikely case of negative rank, return a per-thread state
   if (rank < 0) {
     static thread_local shared_ptr<mscclRankState> threadRankState(new mscclRankState());
     return *threadRankState;
@@ -40,9 +38,6 @@ static inline mscclRankState& mscclGetRankState(int rank) {
   auto rankStateIt = rankStates.find(rank);
   if (rankStateIt == rankStates.end()) {
     // Create a per rank threadRankState rather than per thread
-    // This is to avoid GPUs sharing device scratchBuffer when muliple GPUs 
-    // are on the same thread. Otherwise, non deteministic behavior is 
-    // expected
     shared_ptr<mscclRankState> newthreadRankState(new mscclRankState());
     newthreadRankState->rank = rank;
     rankStateIt = rankStates.insert(make_pair(rank, newthreadRankState)).first;

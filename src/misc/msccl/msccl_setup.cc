@@ -24,25 +24,25 @@ static inline size_t computeSizeNeeded(size_t nBytes, int nScratchChunks, int nC
 
 ncclResult_t mscclGetCaptureStatus(int rank, hipStream_t stream) {
   mscclStatus& status = mscclGetStatus(rank);
-  mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
   mscclSavedProxyArgs& savedProxyArgs = mscclGetSavedProxyArgs(rank);
   cudaStreamCaptureStatus captureStatus;
+  int i = 0;
   unsigned long long captureId;
-  CUDACHECK(hipStreamGetCaptureInfo_v2(stream, &captureStatus, &captureId, &threadLocalStatus.graph, nullptr, nullptr));
+  CUDACHECK(hipStreamGetCaptureInfo_v2(stream, &captureStatus, &captureId, &status.graph, nullptr, nullptr));
   if (captureStatus == cudaStreamCaptureStatusActive) {
     if (savedProxyArgs.count(captureId) == 0) {
-      threadLocalStatus.captureStatus = mscclNewCapture;
+      status.captureStatus = mscclNewCapture;
       savedProxyArgs[captureId] = std::vector<struct mscclProxyArg>();
       NCCLCHECK(mscclInitWorkFifoStatus(&(status.graphWorkFifoStatus[captureId])));
     } else {
       INFO(NCCL_NET,"mscclGetCaptureStatus: captureId %llu is same with the previous one\n", captureId);
-      threadLocalStatus.captureStatus = mscclExistingCapture;
+      status.captureStatus = mscclExistingCapture;
     }
-    threadLocalStatus.captureId = captureId;
+    status.captureId = captureId;
   } else {
-    threadLocalStatus.captureStatus = mscclNoCapture;
+    status.captureStatus = mscclNoCapture;
   }
-  INFO(NCCL_NET,"mscclGetCaptureStatus: %d, captureId: %llu, size: %lu\n", threadLocalStatus.captureStatus, threadLocalStatus.captureId, savedProxyArgs[captureId].size());
+  INFO(NCCL_NET,"mscclGetCaptureStatus: %d, captureId: %llu, size: %lu\n", status.captureStatus, status.captureId, savedProxyArgs[captureId].size());
   return ncclSuccess;
 }
 
@@ -74,8 +74,7 @@ ncclResult_t mscclSetupScratch(struct mscclAlgo* hostAlgo, hipStream_t stream) {
 
 ncclResult_t mscclSetupSyncFlags(int rank, hipStream_t stream) {
   mscclStatus& status = mscclGetStatus(rank);
-  mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
-  if (threadLocalStatus.captureStatus == mscclNewCapture ||
+  if (status.captureStatus == mscclNewCapture ||
       status.workIndex > (1ULL << (8*sizeof(status.workIndex))) - 2 * NCCL_MAX_OPS - 1) {
     CUDACHECK(hipMemsetAsync(status.syncFlags, 0, sizeof(struct mscclFlag) * MSCCL_MAX_NUM_THREAD_BLOCKS, stream));
     status.workIndex = 1; // setting the workIndex back to 1 for next iterations
@@ -185,28 +184,27 @@ static void HIPRT_CB mscclSetupProxyCallback(void *args) {
 
 ncclResult_t mscclSetupProxy(struct mscclAlgo* hostAlgo, ncclComm_t comm, hipStream_t stream) {
   mscclStatus& status = mscclGetStatus(comm->rank);
-  mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
   mscclSavedProxyArgs& savedProxyArgs = mscclGetSavedProxyArgs(comm->rank);
-  if (threadLocalStatus.captureStatus == mscclUnknownCaptureStatus) {
+  if (status.captureStatus == mscclUnknownCaptureStatus) {
     INFO(NCCL_NET, "mscclSetupProxy: reading capture status");
     NCCLCHECK(mscclGetCaptureStatus(comm->rank, stream));
   }
-  if (threadLocalStatus.captureStatus == mscclNoCapture) {
+  if (status.captureStatus == mscclNoCapture) {
     INFO(NCCL_NET,"mscclSetupProxy: no capture\n");
     NCCLCHECK(mscclSetupProxyImpl(hostAlgo, comm));
   } else if (status.needsProxy) {
     INFO(NCCL_NET,"mscclSetupProxy: capture\n");
-    if (savedProxyArgs[threadLocalStatus.captureId].size() == 0) {
+    if (savedProxyArgs[status.captureId].size() == 0) {
       INFO(NCCL_NET,"mscclSetupProxy: adding callback\n");
 
       hipGraphNode_t callbackNode;
       hipHostNodeParams p;
       p.fn = mscclSetupProxyCallback;
-      auto params = &savedProxyArgs[threadLocalStatus.captureId];
+      auto params = &savedProxyArgs[status.captureId];
       p.userData = params;
-      CUDACHECK(hipGraphAddHostNode(&callbackNode, threadLocalStatus.graph, nullptr, 0, &p));
+      CUDACHECK(hipGraphAddHostNode(&callbackNode, status.graph, nullptr, 0, &p));
     }
-    savedProxyArgs[threadLocalStatus.captureId].emplace_back(hostAlgo, comm);
+    savedProxyArgs[status.captureId].emplace_back(hostAlgo, comm);
   }
   return ncclSuccess;
 }
@@ -480,21 +478,21 @@ ncclResult_t mscclSetupKernel(const void* sendBuff, void* recvBuff, size_t count
   work.fnIndex = fnIndex;
   INFO(NCCL_COLL, "MSCCL: typeMask %x fnIndex %d Setup Kernel finished", hostAlgo->typeMask, fnIndex);
 
-  if (threadLocalStatus.captureStatus == mscclUnknownCaptureStatus) {
+  if (status.captureStatus == mscclUnknownCaptureStatus) {
     INFO(NCCL_NET, "MSCCL: reading capture status");
     NCCLCHECK(mscclGetCaptureStatus(comm->rank, stream));
   }
   mscclWorkFifoStatus* workFifoStatus = nullptr;
-  if (threadLocalStatus.captureStatus == mscclNoCapture) {
+  if (status.captureStatus == mscclNoCapture) {
     workFifoStatus = &(status.defaultWorkFifoStatus);
   } else {
-    workFifoStatus = &(status.graphWorkFifoStatus[threadLocalStatus.captureId]);
+    workFifoStatus = &(status.graphWorkFifoStatus[status.captureId]);
   }
 
   uint32_t workFifoIdxMask = workFifoStatus->workFifoDepth - 1;
   uint32_t workFifoSent = workFifoStatus->workFifoSent;
 
-  if (threadLocalStatus.captureStatus != mscclNoCapture && workFifoSent + numBlocks > workFifoStatus->workFifoDepth) {
+  if (status.captureStatus != mscclNoCapture && workFifoSent + numBlocks > workFifoStatus->workFifoDepth) {
     WARN("MSCCL: number of captured works (%u) > max limit (%lu)", workFifoSent + numBlocks, workFifoStatus->workFifoDepth);
     return ncclInternalError;
   }

@@ -185,9 +185,6 @@ struct mscclThreadLocalStatus {
   mscclGroupStatus groupStatus;
   int groupDepth;
   std::vector<struct mscclSavedSchedulerParam> savedSchedulerParams;
-  unsigned long long captureId;
-  mscclCaptureStatus captureStatus;
-  hipGraph_t graph;
 };
 
 struct mscclWorkFifoStatus {
@@ -227,6 +224,9 @@ struct mscclStatus {
   bool needsProxy;
   mscclWorkFifoStatus defaultWorkFifoStatus;
   mscclSavedGraphWorkFifoStatus graphWorkFifoStatus;
+  unsigned long long captureId;
+  mscclCaptureStatus captureStatus;
+  hipGraph_t graph;
 };
 
 #pragma pack(push)

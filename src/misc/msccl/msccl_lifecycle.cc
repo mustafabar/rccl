@@ -114,25 +114,25 @@ static const char* mscclAlgoShareDirPath = "../share/rccl/msccl-algorithms";
 static const char* mscclUnitTestAlgoShareDirPath = "../share/rccl/msccl-unit-test-algorithms";
 
 static ncclResult_t mscclInternalSchedulerInit(ncclComm_t comm, int* numChannelsRequired) {
-  static thread_local bool mscclAlgoMetaLoaded = false;
+  //static thread_local bool mscclAlgoMetaLoaded = false;
   mscclStatus& status = mscclGetStatus(comm->rank);
 
   int maxNchannels = *numChannelsRequired;
   *numChannelsRequired = 0;
-  // Query numChannelsRequired from loaded algorithm metas
-  if (mscclAlgoMetaLoaded) {
-    for (auto& m : status.algoMetas) {
-      if (comm->nRanks == m.nRanks) {
-        if(m.nChannels <= maxNchannels) {
-          *numChannelsRequired = std::max(*numChannelsRequired, m.nChannels);
-        } else {
-          WARN("NCCL_MAX_NCHANNELS:%d is lesser than number of channels required by MSCCL:%d, so disabling MSCCL for %s between minBytes:%ld and maxBytes:%ld from file: %s", \
-                maxNchannels, m.nChannels, mscclFuncNames[m.func], m.minBytes, m.maxBytes, m.filePath.c_str());
-        }
-      }
-    }
-    return ncclSuccess;
-  }
+  // // Query numChannelsRequired from loaded algorithm metas
+  // if (mscclAlgoMetaLoaded) {
+  //   for (auto& m : status.algoMetas) {
+  //     if (comm->nRanks == m.nRanks) {
+  //       if(m.nChannels <= maxNchannels) {
+  //         *numChannelsRequired = std::max(*numChannelsRequired, m.nChannels);
+  //       } else {
+  //         WARN("NCCL_MAX_NCHANNELS:%d is lesser than number of channels required by MSCCL:%d, so disabling MSCCL for %s between minBytes:%ld and maxBytes:%ld from file: %s", \
+  //               maxNchannels, m.nChannels, mscclFuncNames[m.func], m.minBytes, m.maxBytes, m.filePath.c_str());
+  //       }
+  //     }
+  //   }
+  //   return ncclSuccess;
+  // }
 
   const char* mscclAlgoDir = getenv(mscclAlgoDirEnv);
   const char* mscclAlgoShareDir = nullptr;
@@ -196,7 +196,7 @@ static ncclResult_t mscclInternalSchedulerInit(ncclComm_t comm, int* numChannels
     return ncclInvalidUsage;
   }
   status.rankToAlgoHandles.resize(status.algoMetas.size());
-  mscclAlgoMetaLoaded = true;
+  //mscclAlgoMetaLoaded = true;
   return ncclSuccess;
 }
 
@@ -291,9 +291,9 @@ ncclResult_t mscclInit(ncclComm_t comm) {
 ncclResult_t mscclGroupStart() {
   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
   threadLocalStatus.groupDepth++;
-  if (threadLocalStatus.groupStatus == mscclNoGroup) {
-    threadLocalStatus.groupStatus = mscclGroupSupportedOp;
-  }
+  //if (threadLocalStatus.groupStatus == mscclNoGroup) {
+  //  threadLocalStatus.groupStatus = mscclGroupSupportedOp;
+ // }
   return ncclSuccess;
 }
 
@@ -499,6 +499,7 @@ ncclResult_t mscclEnqueueCheck(
     size_t count, ncclDataType_t dataType, int root, int peer, ncclRedOp_t op,
     mscclFunc_t func, ncclComm_t comm, hipStream_t stream) {
   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
+  mscclStatus& status = mscclGetStatus(comm->rank);
 
   threadLocalStatus.savedSchedulerParams.push_back({});
   NCCLCHECK(mscclSetSavedSchedulerParam(
@@ -512,13 +513,13 @@ ncclResult_t mscclEnqueueCheck(
     case mscclNoGroup:
 #ifdef ENABLE_MSCCLPP
       if (comm->mscclppCompatible) {
-        if (threadLocalStatus.captureStatus == mscclUnknownCaptureStatus) {
+        if (status.captureStatus == mscclUnknownCaptureStatus) {
           INFO(NCCL_COLL, "MSCCL++: reading capture status");
           NCCLCHECK(mscclGetCaptureStatus(comm->rank, stream));
         }
 
         /* check if one rank per GPU and graph mode is enabled */
-        if ((threadLocalStatus.captureStatus != mscclNoCapture) && comm->mscclCompatible && nBytes > 0 && (nBytes & 31) == 0) {
+        if ((status.captureStatus != mscclNoCapture) && comm->mscclCompatible && nBytes > 0 && (nBytes & 31) == 0) {
           bool isManagedBuffer = false;
           if (sendBuff) CUDACHECK(hipPointerGetAttribute(&isManagedBuffer, HIP_POINTER_ATTRIBUTE_IS_MANAGED, const_cast<void*>(sendBuff)));
           if (!isManagedBuffer && recvBuff) CUDACHECK(hipPointerGetAttribute(&isManagedBuffer, HIP_POINTER_ATTRIBUTE_IS_MANAGED, const_cast<void*>(recvBuff)));
@@ -553,13 +554,13 @@ ncclResult_t mscclEnqueueCheck(
     case mscclGroupSupportedOp:
 #ifdef ENABLE_MSCCLPP
       if (comm->mscclppCompatible) {
-        if (threadLocalStatus.captureStatus == mscclUnknownCaptureStatus) {
+        if (status.captureStatus == mscclUnknownCaptureStatus) {
           INFO(NCCL_COLL, "MSCCL++: reading capture status");
           NCCLCHECK(mscclGetCaptureStatus(comm->rank, stream));
         }
 
         /* check if one rank per GPU and graph mode is enabled */
-        if ((threadLocalStatus.captureStatus != mscclNoCapture) && comm->mscclCompatible && nBytes > 0 && (nBytes & 31) == 0) {
+        if ((status.captureStatus != mscclNoCapture) && comm->mscclCompatible && nBytes > 0 && (nBytes & 31) == 0) {
           bool isManagedBuffer = false;
           if (sendBuff) CUDACHECK(hipPointerGetAttribute(&isManagedBuffer, HIP_POINTER_ATTRIBUTE_IS_MANAGED, const_cast<void*>(sendBuff)));
           if (!isManagedBuffer && recvBuff) CUDACHECK(hipPointerGetAttribute(&isManagedBuffer, HIP_POINTER_ATTRIBUTE_IS_MANAGED, const_cast<void*>(recvBuff)));
@@ -605,10 +606,10 @@ ncclResult_t mscclGroupEnd() {
   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
   threadLocalStatus.groupDepth--;
   if (threadLocalStatus.groupDepth == 0) {
-    if (threadLocalStatus.groupStatus == mscclGroupSupportedOp) {
-      NCCLCHECK(mscclRunSavedParams());
-    }
-    threadLocalStatus.groupStatus = mscclNoGroup;
+    //if (threadLocalStatus.groupStatus == mscclGroupSupportedOp) {
+     // NCCLCHECK(mscclRunSavedParams());
+   // }
+    //threadLocalStatus.groupStatus = mscclNoGroup;
   }
   return ncclSuccess;
 }

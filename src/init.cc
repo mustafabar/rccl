@@ -1106,6 +1106,7 @@ fail:
 
 // MNNVL: Flag to indicate whether to enable Multi-Node NVLink
 NCCL_PARAM(MNNVL, "MNNVL", -2);
+RCCL_PARAM(UsePatternTree, "USE_PATTERN_TREE", 0);
 
 static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* parent = NULL) {
   // We use 2 AllGathers
@@ -1358,7 +1359,7 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
 
   memset(&treeGraph, 0, sizeof(struct ncclTopoGraph));
   treeGraph.id = 1;
-  treeGraph.pattern = NCCL_TOPO_PATTERN_BALANCED_TREE;
+  treeGraph.pattern = (rcclParamUsePatternTree() == 0) ? NCCL_TOPO_PATTERN_BALANCED_TREE : NCCL_TOPO_PATTERN_TREE;
   treeGraph.collNet = 0;
   treeGraph.minChannels = comm->topo->nodes[NET].count != 0 ? 1 : ringGraph.nChannels;
   treeGraph.maxChannels = ringGraph.nChannels;

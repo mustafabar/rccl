@@ -456,9 +456,11 @@ private:
       if (RECV) {
         data = !SRC ? peerData : applyReduce(redOp, peerData, data);
         #pragma unroll MaxRecv
-        for (int i=1; i < MaxRecv && i < fan.nrecv(); i++) {
-          peerData = readLLFinish(offset, line, i);
-          data = applyReduce(redOp, peerData, data);
+        for (int i=1; i < MaxRecv; i++) {
+          if(i < fan.nrecv()) {
+            peerData = readLLFinish(offset, line, i);
+            data = applyReduce(redOp, peerData, data);
+          }
         }
       }
 

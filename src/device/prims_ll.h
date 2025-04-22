@@ -132,8 +132,10 @@ private:
   inline __device__ void incSend(int i, int offset) {
     // LL Cleanup : write all flags in the slice to make sure we don't have
     // data corruption when flag loops over.
+    uint32_t flag = sendFlag(i);
+    union ncclLLFifoLine* sndPtr = sendPtr(i);
     if ((sendStep[i] & NCCL_LL_CLEAN_MASK) == NCCL_LL_CLEAN_MASK) {
-      for (int o = offset; o<stepLines; o+=nthreads) storeLL(sendPtr(i)+o, 0, sendFlag(i));
+      for (int o = offset; o<stepLines; o+=nthreads) storeLL(sndPtr+o, 0, flag);
     }
     sendStep[i]++;
   }

@@ -122,15 +122,19 @@ private:
       STORE((unsigned long long *)sendConnTailPtr, sendConnTail += 1);
     }
   }
+  template<int WordPerThread>
+  __device__ __forceinline__ void computeThreadOffsets(int(&ix)[WordPerThread/2]) {
+    #pragma unroll
+    for (int g = 0; g < WordPerThread/2; g++) {
+      ix[g] = g*WARP_SIZE - 16*(g/2) + wid - (g%2) * (wid/4);
+    }
+  }
 
   template<int WordPerThread>
   __device__ __forceinline__ void loadRegsBegin(uint64_t(&regs)[WordPerThread], T const *src, int eltN) {
     constexpr int EltPer16B = 16/sizeof(T);
     int ix[WordPerThread/2];
-    #pragma unroll
-    for(int g=0; g < WordPerThread/2; g++) {
-      ix[g] = g*WARP_SIZE - 16*(g/2) + wid - (g%2)*(wid/4);
-    }
+    computeThreadOffsets<WordPerThread>(ix);
     if(reinterpret_cast<uintptr_t>(src)%16 == 0) {
       /* We are aligned to 16 bytes, so load directly to registers no shmem.
        * Flag threads load half as much data which gets shuffled to the even
@@ -194,10 +198,7 @@ private:
       if (flagThread) regs[2*g-1] = regs[2*g];
     }
     int ix[WordPerThread/2];
-    #pragma unroll
-    for(int g=0; g < WordPerThread/2; g++) {
-      ix[g] = g*WARP_SIZE - 16*(g/2) + wid - (g%2)*(wid/4);
-    }
+    computeThreadOffsets<WordPerThread>(ix);
     // Write to dst if 4-byte aligned, shmem otherwise.
     int misalignment = reinterpret_cast<uintptr_t>(dst)%16;
     uint64_t *shm8 = shmemCvtPtr((uint64_t*)ncclScratchForWarp(warpInBlock));

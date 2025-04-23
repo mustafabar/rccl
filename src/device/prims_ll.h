@@ -9,14 +9,25 @@
 #if defined(ENABLE_NPKIT)
 #include "npkit/npkit.h"
 #endif
+template<int MaxRecv, typename Enable = void>
+struct LLRecvStorage;
 
+template<int MaxRecv>
+struct LLRecvStorage<MaxRecv, typename std::enable_if<(MaxRecv > 0)>::type> {
+  uint64_t recvStep[MaxRecv];
+  union ncclLLFifoLine* recvBuff[MaxRecv];
+};
+template<int MaxRecv>
+struct LLRecvStorage<MaxRecv, typename std::enable_if<(MaxRecv <= 0)>::type> {
+  // Empty storage — nothing allocated
+};
 template<typename T, typename RedOp, typename Fan, int Direct, int P2p>
 class Primitives<T, RedOp, Fan, Direct, ProtoLL, P2p>:
   public PrimitivesWithoutDirect<Primitives<T, RedOp, Fan, Direct, ProtoLL, P2p>> {
 
   // In the case of Fan::MaxRecv == 0, we need to force MaxRecv to 1 for this to compile
   // This is because of a recv buffer which is allocated to MaxRecv length in send-only cases
-  static constexpr int MaxRecv = Fan::MaxRecv > 1 ? Fan::MaxRecv : 1;
+  static constexpr int MaxRecv = Fan::MaxRecv;
   static constexpr int MaxSend = Fan::MaxSend;
   static constexpr int Input=0, Output=1;
   RedOp redOp;
@@ -36,10 +47,8 @@ class Primitives<T, RedOp, Fan, Direct, ProtoLL, P2p>:
   volatile uint64_t* sendConnHeadPtr = NULL;
   uint64_t sendConnHead;
   uint64_t sendConnHeadCache; // Cache last seen value
-
-  uint64_t recvStep[MaxRecv];
+  LLRecvStorage<Fan::MaxRecv> recvState;
   uint64_t sendStep[MaxSend];
-  union ncclLLFifoLine* recvBuff[MaxRecv];
   union ncclLLFifoLine* sendBuff[MaxSend];
 
 #if defined(ENABLE_NPKIT)
@@ -58,11 +67,11 @@ private:
   uint64_t npKitWaitRecvTotalTime = 0;
 #endif
 
-  inline __device__ int recvOffset(int i) { return (recvStep[i]%NCCL_STEPS)*stepLines; }
+  inline __device__ int recvOffset(int i) { if constexpr (Fan::MaxRecv > 0) return (recvState.recvStep[i]%NCCL_STEPS)*stepLines; else return 0; }
   inline __device__ int sendOffset(int i) { return (sendStep[i]%NCCL_STEPS)*stepLines; }
-  inline __device__ union ncclLLFifoLine* recvPtr(int i) { return recvBuff[i]+recvOffset(i); }
+  inline __device__ union ncclLLFifoLine* recvPtr(int i) {if constexpr (Fan::MaxRecv > 0) return recvState.recvBuff[i]+recvOffset(i); else return nullptr; }
   inline __device__ union ncclLLFifoLine* sendPtr(int i) { return sendBuff[i]+sendOffset(i); }
-  inline __device__ uint32_t recvFlag(int i) { return NCCL_LL_FLAG(recvStep[i]+1); }
+  inline __device__ uint32_t recvFlag(int i) {if constexpr (Fan::MaxRecv > 0)  return NCCL_LL_FLAG(recvState.recvStep[i]+1); else return 0; }
   inline __device__ uint32_t sendFlag(int i) { return NCCL_LL_FLAG(sendStep[i]+1); }
 
   uint64_t* barriers;
@@ -122,7 +131,9 @@ private:
   }
 
   inline __device__ void incRecv(int i) {
-    recvStep[i] += 1;
+    if constexpr (Fan::MaxRecv > 0) {
+      recvState.recvStep[i] += 1;
+    }
   }
   inline __device__ void postRecv() {
     barrier();
@@ -190,10 +201,10 @@ private:
     return val64;
   }
 
-  template<int BeginIx>
-  __device__ void readLLBeginAll(int offset, ncclLLFifoLine(&line)[MaxRecv]) {
+  template<int BeginIx, int NRecv>
+  __device__ void readLLBeginAll(int offset, ncclLLFifoLine(&line)[NRecv]) {
     #pragma unroll
-    for (int i=BeginIx; i < MaxRecv; i++) {
+    for (int i=BeginIx; i < NRecv; i++) {
       // Yes, for some template arguments this code will be unreachable.  That's fine.
       // coverity[dead_error_line]
       if (i < fan.nrecv()) {
@@ -212,7 +223,8 @@ private:
       }
     }
   }
-  __device__ uint64_t readLLFinish(int offset, ncclLLFifoLine(&line)[MaxRecv], int i) {
+  template<int BeginIx, int NRecv>
+  __device__ uint64_t readLLFinish(int offset, ncclLLFifoLine(&line)[NRecv], int i) {
     union ncclLLFifoLine* src = recvPtr(i) + offset;
     uint32_t flag = recvFlag(i);
     int spins = 0;
@@ -419,9 +431,14 @@ private:
   __device__ void LLGenericOp(intptr_t srcIx, intptr_t dstIx, int nelem, bool postOp) {
     constexpr int SRC = SrcBuf != -1 ? 1 : 0;
     constexpr int DST = DstBuf != -1 ? 1 : 0;
-    T *srcElts = SrcBuf == -1 ? nullptr : userBufs[SrcBuf] + srcIx;
-    T *dstElts = DstBuf == -1 ? nullptr : userBufs[DstBuf] + dstIx;
-
+    T *srcElts = nullptr;
+    if constexpr (SrcBuf != -1) {
+      srcElts = userBufs[SrcBuf] + srcIx;
+    }
+    T *dstElts = nullptr;
+    if constexpr (DstBuf != -1) {
+      dstElts = userBufs[DstBuf] + dstIx;
+    }
     // Always waitSend in case of cleanup
     nelem = nelem < 0 ? 0 : nelem;
     if (SEND) waitSend(divUp(nelem, EltPerLine)*sizeof(ncclLLFifoLine));
@@ -451,28 +468,32 @@ private:
       int eltInLine = EltPerLine < nelem ? EltPerLine : nelem;
 
       DataLoader dl;
-      ncclLLFifoLine line[MaxRecv];
+      ncclLLFifoLine line[(Fan::MaxRecv > 0 ? Fan::MaxRecv : 1)];
       uint64_t data, peerData;
       if (SRC) {
         dl.loadBegin(srcElts, eltInLine);
         srcElts += eltPerTrip;
       }
-      if (RECV) {
-        readLLBeginAll<1>(offset, line);
-        peerData = readLL(offset, 0);
+      if constexpr (Fan::MaxRecv > 0) {
+        if (RECV) {
+          readLLBeginAll<1, Fan::MaxRecv>(offset, line);
+          peerData = readLL(offset, 0);
+        }
       }
       if (SRC) {
         data = dl.loadFinish();
         if (SrcBuf == Input) data = applyPreOp(redOp, data);
       }
-      if (RECV) {
-        data = !SRC ? peerData : applyReduce(redOp, peerData, data);
-        #pragma unroll MaxRecv
-        // Yes, for some template arguments this code will be unreachable.  That's fine.
-        // coverity[dead_error_line]
-        for (int i=1; i < MaxRecv && i < fan.nrecv(); i++) {
-          peerData = readLLFinish(offset, line, i);
-          data = applyReduce(redOp, peerData, data);
+      if constexpr (Fan::MaxRecv > 0) {
+        if (RECV) {
+          data = !SRC ? peerData : applyReduce(redOp, peerData, data);
+          #pragma unroll MaxRecv
+          // Yes, for some template arguments this code will be unreachable.  That's fine.
+          // coverity[dead_error_line]
+          for (int i=1; i < MaxRecv && i < fan.nrecv(); i++) {
+            peerData = readLLFinish<Fan::MaxRecv>(offset, line, i);
+            data = applyReduce(redOp, peerData, data);
+          }
         }
       }
 
@@ -599,9 +620,11 @@ private:
   }
 
   __device__ __forceinline__ void loadRecvConn(struct ncclConnInfo* conn, int i) {
-    recvBuff[i] = (union ncclLLFifoLine*)conn->buffs[NCCL_PROTO_LL];
-    recvStep[i] = conn->step;
-    if (wid == i) recvConn = conn;
+    if constexpr (Fan::MaxRecv > 0) {
+      recvState.recvBuff[i] = (union ncclLLFifoLine*)conn->buffs[NCCL_PROTO_LL];
+      recvState.recvStep[i] = conn->step;
+      if (wid == i) recvConn = conn;
+    }
   }
   __device__ __forceinline__ void loadRecvSync() {
     if (tid >= nthreads-WARP_SIZE && wid < fan.nrecv()) {

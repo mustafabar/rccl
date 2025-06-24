@@ -208,6 +208,41 @@ __device__ __forceinline__ void reduceCopyPacks(
   thread = warp*WARP_SIZE + lane;
 }
 #else
+
+template <typename RedFn, typename SrcPtrFn, typename IntBytes, int MultimemSrcs, int MinSrcs, int MaxSrcs, int PreOpSrcs, int Unroll, int BytePerPack>
+__device__ __forceinline__ void loadSources(
+  const RedFn& redFn, 
+  const SrcPtrFn& srcPtrFn, 
+  IntBytes& globalOffset, 
+  uintptr_t* minSrcs, 
+  uint64_t *preOpArgs,
+  BytePack<BytePerPack> buff[MaxSrcs + !MaxSrcs][Unroll], 
+  int nSrcs
+) {
+  #pragma unroll Unroll
+  for (int s = 0; s < MinSrcs; s++) {
+    RedFn preFn(s < PreOpSrcs ? preOpArgs[s] : 0);
+    #pragma unroll Unroll
+    for (int u = 0; u < Unroll; u++) {
+      if (s < MultimemSrcs) {
+        buff[s][u] = applyLoadMultimem<RedFn, BytePerPack>(redFn, minSrcs[s]);
+      } else {
+        buff[s][u] = ld_volatile_global<BytePerPack>(minSrcs[s]);
+      }
+      minSrcs[s] += WARP_SIZE * BytePerPack;
+    }
+  }
+  for (int s = MinSrcs; (MinSrcs < MaxSrcs) && (s < MaxSrcs) && (s < nSrcs); s++) {
+    uintptr_t src = cvta_to_global(srcPtrFn(s)) + globalOffset;
+    #pragma unroll Unroll
+    for (int u = 0; u < Unroll; u++) {
+      buff[s][u] = ld_volatile_global<BytePerPack>(src);
+      src += WARP_SIZE * BytePerPack;
+    }
+  }
+}
+
+
 template<typename RedFn, typename T, int Unroll, int BytePerPack,
          int MultimemSrcs, int MinSrcs, int MaxSrcs,
          int MultimemDsts, int MinDsts, int MaxDsts, int PreOpSrcs,
@@ -219,6 +254,7 @@ __device__ __forceinline__ void reduceCopyPacks(
     IntBytes &nBytesBehind, IntBytes &nBytesAhead
   ) {
   static_assert(std::is_signed<IntBytes>::value, "IntBytes must be a signed integral type.");
+  static_assert(MinSrcs <= MaxSrcs, "MinSrcs must be less than or equal to MaxSrcs.");
   //if (BytePerPack == 0) __trap();
 
   // A hunk is the amount of contiguous data a warp consumes per loop iteration
@@ -265,35 +301,12 @@ __device__ __forceinline__ void reduceCopyPacks(
   // We dictate loop termination condition according to whether partial hunks
   // can be handled or not.
   while (Unroll==1 ? (BytePerPack <= threadBytesAhead) : (0 < nHunksAhead)) {
-    #pragma unroll Unroll
-    for (int s=0; s < MinSrcs; s++) {
-      // Yes, for some template arguments this code will be unreachable.  That's fine.
-      // coverity[dead_error_begin]
-      RedFn preFn(s < PreOpSrcs ? preOpArgs[s] : 0);
-      #pragma unroll Unroll
-      for (int u=0; u < Unroll; u++) {
-        if (s < MultimemSrcs) {
-          // applyLoadMultimem uses relaxed semantics for same reason we use volatile below.
-          // coverity[dead_error_line]
-          acc1[s][u] = applyLoadMultimem<RedFn, BytePerPack>(redFn, minSrcs[s]);
-        } else {
-          // Use volatile loads in case credits are polled for with volatile (instead of acquire).
-          acc1[s][u] = ld_volatile_global<BytePerPack>(minSrcs[s]);
-        }
-        minSrcs[s] += WARP_SIZE*BytePerPack;
-      }
-    }
-    for (int s=MinSrcs; (MinSrcs < MaxSrcs) && (s < MaxSrcs) && (s < nSrcs); s++) {
-      uintptr_t src = cvta_to_global(srcPtrFn(s)) + threadBytesBehind;
-      // Yes, for some template arguments this code will be unreachable.  That's fine.
-      // coverity[dead_error_line]
-      #pragma unroll Unroll
-      for (int u=0; u < Unroll; u++) {
-        // Use volatile loads in case credits are polled for with volatile (instead of acquire).
-        acc1[s][u] = ld_volatile_global<BytePerPack>(src);
-        src += WARP_SIZE*BytePerPack;
-      }
-    }
+
+    // load sources into acc1
+    loadSources<RedFn, SrcPtrFn, IntBytes, MultimemSrcs, MinSrcs, MaxSrcs, PreOpSrcs, Unroll, BytePerPack>(
+      redFn, srcPtrFn, threadBytesBehind, minSrcs, preOpArgs, acc1, nSrcs
+    );
+    
     if(tailProcess) {
       for (int s=0; s < MinSrcs; s++) {
         RedFn preFn(s < PreOpSrcs ? preOpArgs[s] : 0);

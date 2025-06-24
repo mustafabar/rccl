@@ -242,6 +242,54 @@ __device__ __forceinline__ void loadSources(
   }
 }
 
+template <typename RedFn, typename DstPtrFn, typename IntBytes, int MultimemDsts, int MinSrcs, int MaxSrcs, int MinDsts, int MaxDsts, int PreOpSrcs, int Unroll, int BytePerPack>
+  __device__ __forceinline__ void reduceAndStore(
+  RedFn redFn, uint64_t *preOpArgs, BytePack<BytePerPack> buff[MaxSrcs + !MaxSrcs][Unroll],
+  uintptr_t *minDsts, bool postOp, int nDsts, DstPtrFn const &dstPtrFn, IntBytes tailThreadBytesBehind, int nSrcs) {
+  for (int s = 0; s < MinSrcs; s++) {
+    RedFn preFn(s < PreOpSrcs ? preOpArgs[s] : 0);
+    #pragma unroll Unroll
+    for (int u = 0; u < Unroll; u++) {
+      if (s < PreOpSrcs) buff[s][u] = applyPreOp(preFn, buff[s][u]);
+      if (s > 0) buff[0][u] = applyReduce(redFn, buff[0][u], buff[s][u]);
+    }
+  }
+  for (int s = MinSrcs; (MinSrcs < MaxSrcs) && (s < MaxSrcs) && (s < nSrcs); s++) {
+    RedFn preFn(s < PreOpSrcs ? preOpArgs[s] : 0);
+    #pragma unroll Unroll
+    for (int u = 0; u < Unroll; u++) {
+      if (s < PreOpSrcs) buff[s][u] = applyPreOp(preFn, buff[s][u]);
+      buff[0][u] = applyReduce(redFn, buff[0][u], buff[s][u]);
+    }
+  }
+  if (postOp) {
+    #pragma unroll Unroll
+    for (int u = 0; u < Unroll; u++)
+      buff[0][u] = applyPostOp(redFn, buff[0][u]);
+  }
+
+  #pragma unroll Unroll
+  for (int d = 0; d < MinDsts; d++) {
+    #pragma unroll Unroll
+    for (int u = 0; u < Unroll; u++) {
+      if (d < MultimemDsts) {
+        multimem_st_global(minDsts[d], buff[0][u]);
+      } else {
+        st_global<BytePerPack>(minDsts[d], buff[0][u]);
+      }
+      minDsts[d] += WARP_SIZE * BytePerPack;
+    }
+  }
+  for (int d = MinDsts; (MinDsts < MaxDsts) && (d < MaxDsts) && (d < nDsts); d++) {
+    uintptr_t dstPtr = cvta_to_global(dstPtrFn(d));
+    uintptr_t dst = dstPtr + tailThreadBytesBehind;
+    #pragma unroll Unroll
+    for (int u = 0; u < Unroll; u++) {
+      st_global<BytePerPack>(dst, buff[0][u]);
+      dst += WARP_SIZE * BytePerPack;
+    }
+  }
+}
 
 template<typename RedFn, typename T, int Unroll, int BytePerPack,
          int MultimemSrcs, int MinSrcs, int MaxSrcs,
@@ -308,55 +356,10 @@ __device__ __forceinline__ void reduceCopyPacks(
     );
     
     if(tailProcess) {
-      for (int s=0; s < MinSrcs; s++) {
-        RedFn preFn(s < PreOpSrcs ? preOpArgs[s] : 0);
-        #pragma unroll Unroll
-        for (int u=0; u < Unroll; u++) {
-          // coverity[dead_error_line]
-          if (s < PreOpSrcs) acc2[s][u] = applyPreOp(preFn, acc2[s][u]);
-          if (s > 0) acc2[0][u] = applyReduce(redFn, acc2[0][u], acc2[s][u]);
-        }
-      }
-      for (int s=MinSrcs; (MinSrcs < MaxSrcs) && (s < MaxSrcs) && (s < nSrcs); s++) {
-        RedFn preFn(s < PreOpSrcs ? preOpArgs[s] : 0);
-        #pragma unroll Unroll
-        for (int u=0; u < Unroll; u++) {
-          // Yes, for some template arguments this code will be unreachable.  That's fine.
-          // coverity[dead_error_line]
-          if (s < PreOpSrcs) acc2[s][u] = applyPreOp(preFn, acc2[s][u]);
-          acc2[0][u] = applyReduce(redFn, acc2[0][u], acc2[s][u]);
-        }
-      }
-      if (postOp) {
-        #pragma unroll Unroll
-        for (int u=0; u < Unroll; u++)
-          acc2[0][u] = applyPostOp(redFn, acc2[0][u]);
-      }
-
-      #pragma unroll Unroll
-      for (int d=0; d < MinDsts; d++) {
-        #pragma unroll Unroll
-        // Yes, for some template arguments this code will be unreachable.  That's fine.
-        // coverity[dead_error_begin]
-        for (int u=0; u < Unroll; u++) {
-          // coverity[dead_error_condition]
-          if (d < MultimemDsts) {
-            multimem_st_global(minDsts[d], acc2[0][u]);
-          } else {
-            st_global<BytePerPack>(minDsts[d], acc2[0][u]);
-          }
-          minDsts[d] += WARP_SIZE*BytePerPack;
-        }
-      }
-      for (int d=MinDsts; (MinDsts < MaxDsts) && (d < MaxDsts) && (d < nDsts); d++) {
-        uintptr_t dstPtr = cvta_to_global(dstPtrFn(d));
-        uintptr_t dst = dstPtr + tailThreadBytesBehind;
-        #pragma unroll Unroll
-        for (int u=0; u < Unroll; u++) {
-          st_global<BytePerPack>(dst, acc2[0][u]);
-          dst += WARP_SIZE*BytePerPack;
-        }
-      }
+      reduceAndStore<RedFn, DstPtrFn, IntBytes, MultimemDsts, MinSrcs, MaxSrcs, MinDsts, MaxDsts, PreOpSrcs, Unroll, BytePerPack>(
+        redFn, preOpArgs, acc2, minDsts, postOp, nDsts, dstPtrFn, tailThreadBytesBehind, nSrcs
+      );
+      
       #pragma unroll
       // Yes, for some template arguments this code will be unreachable.  That's fine.
       // coverity[dead_error_line]
@@ -392,56 +395,10 @@ __device__ __forceinline__ void reduceCopyPacks(
         }
       }
     }
-    for (int s=0; s < MinSrcs; s++) {
-      RedFn preFn(s < PreOpSrcs ? preOpArgs[s] : 0);
-      #pragma unroll Unroll
-      for (int u=0; u < Unroll; u++) {
-        // coverity[dead_error_line]
-        if (s < PreOpSrcs) acc1[s][u] = applyPreOp(preFn, acc1[s][u]);
-        if (s > 0) acc1[0][u] = applyReduce(redFn, acc1[0][u], acc1[s][u]);
-      }
-    }
+    reduceAndStore<RedFn, DstPtrFn, IntBytes, MultimemDsts, MinSrcs, MaxSrcs, MinDsts, MaxDsts, PreOpSrcs, Unroll, BytePerPack>(
+      redFn, preOpArgs, acc1, minDsts, postOp, nDsts, dstPtrFn, threadBytesBehind, nSrcs
+    );
 
-    for (int s=MinSrcs; (MinSrcs < MaxSrcs) && (s < MaxSrcs) && (s < nSrcs); s++) {
-      RedFn preFn(s < PreOpSrcs ? preOpArgs[s] : 0);
-     #pragma unroll Unroll
-      for (int u=0; u < Unroll; u++) {
-        // Yes, for some template arguments this code will be unreachable.  That's fine.
-        // coverity[dead_error_line]
-        if (s < PreOpSrcs) acc1[s][u] = applyPreOp(preFn, acc1[s][u]);
-        acc1[0][u] = applyReduce(redFn, acc1[0][u], acc1[s][u]);
-      }
-    }
-    if (postOp) {
-      #pragma unroll Unroll
-      for (int u=0; u < Unroll; u++)
-        acc1[0][u] = applyPostOp(redFn, acc1[0][u]);
-    }
-
-    #pragma unroll Unroll
-    for (int d=0; d < MinDsts; d++) {
-      #pragma unroll Unroll
-      // Yes, for some template arguments this code will be unreachable.  That's fine.
-      // coverity[dead_error_begin]
-      for (int u=0; u < Unroll; u++) {
-        // coverity[dead_error_condition]
-        if (d < MultimemDsts) {
-          multimem_st_global(minDsts[d], acc1[0][u]);
-        } else {
-          st_global<BytePerPack>(minDsts[d], acc1[0][u]);
-        }
-        minDsts[d] += WARP_SIZE*BytePerPack;
-      }
-    }
-    for (int d=MinDsts; (MinDsts < MaxDsts) && (d < MaxDsts) && (d < nDsts); d++) {
-      uintptr_t dstPtr = cvta_to_global(dstPtrFn(d));
-      uintptr_t dst = dstPtr + threadBytesBehind;
-      #pragma unroll Unroll
-      for (int u=0; u < Unroll; u++) {
-        st_global<BytePerPack>(dst, acc1[0][u]);
-        dst += WARP_SIZE*BytePerPack;
-      }
-    }
     if(tailProcess) {
       threadBytesBehind += nWarps*BytePerHunk;
       #pragma unroll
@@ -472,6 +429,7 @@ __device__ __forceinline__ void reduceCopyPacks(
       nHunksAhead -= nWarps;
     }
   }
+  
   if(tailProcess) {
     for (int s=0; s < MinSrcs; s++) {
       RedFn preFn(s < PreOpSrcs ? preOpArgs[s] : 0);

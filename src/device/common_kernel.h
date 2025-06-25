@@ -361,8 +361,6 @@ __device__ __forceinline__ void reduceCopyPacks(
       );
       
       #pragma unroll
-      // Yes, for some template arguments this code will be unreachable.  That's fine.
-      // coverity[dead_error_line]
       for (int d=0; d < MinDsts; d++) {
         minDsts[d] += (nWarps-1)*BytePerHunk;
       }
@@ -375,50 +373,23 @@ __device__ __forceinline__ void reduceCopyPacks(
     threadBytesAhead -= nWarps*BytePerHunk;
     nHunksAhead -= nWarps;
     tailProcess = Unroll==1 ? (BytePerPack <= threadBytesAhead) : (0 < nHunksAhead);
+    
+    tailThreadBytesBehind = threadBytesBehind;
+    threadBytesBehind += nWarps*BytePerHunk;
     if(tailProcess) {
-      #pragma unroll Unroll
-      for (int s=0; s < MinSrcs; s++) {
-        // Yes, for some template arguments this code will be unreachable.  That's fine.
-        // coverity[dead_error_begin]
-        RedFn preFn(s < PreOpSrcs ? preOpArgs[s] : 0);
-        #pragma unroll Unroll
-        for (int u=0; u < Unroll; u++) {
-          if (s < MultimemSrcs) {
-            // applyLoadMultimem uses relaxed semantics for same reason we use volatile below.
-            // coverity[dead_error_line]
-            acc2[s][u] = applyLoadMultimem<RedFn, BytePerPack>(redFn, minSrcs[s]);
-          } else {
-            // Use volatile loads in case credits are polled for with volatile (instead of acquire).
-            acc2[s][u] = ld_volatile_global<BytePerPack>(minSrcs[s]);
-          }
-          minSrcs[s] += WARP_SIZE*BytePerPack;
-        }
-      }
+      loadSources<RedFn, SrcPtrFn, IntBytes, MultimemSrcs, MinSrcs, MaxSrcs, PreOpSrcs, Unroll, BytePerPack>(
+        redFn, srcPtrFn, threadBytesBehind, minSrcs, preOpArgs, acc2, nSrcs
+      );
     }
     reduceAndStore<RedFn, DstPtrFn, IntBytes, MultimemDsts, MinSrcs, MaxSrcs, MinDsts, MaxDsts, PreOpSrcs, Unroll, BytePerPack>(
-      redFn, preOpArgs, acc1, minDsts, postOp, nDsts, dstPtrFn, threadBytesBehind, nSrcs
+      redFn, preOpArgs, acc1, minDsts, postOp, nDsts, dstPtrFn, tailThreadBytesBehind, nSrcs
     );
 
     if(tailProcess) {
-      threadBytesBehind += nWarps*BytePerHunk;
       #pragma unroll
-      // Yes, for some template arguments this code will be unreachable.  That's fine.
-      // coverity[dead_error_line]
       for (int d=0; d < MinDsts; d++) {
         minDsts[d] += (nWarps-1)*BytePerHunk;
       }
-      for (int s=MinSrcs; (MinSrcs < MaxSrcs) && (s < MaxSrcs) && (s < nSrcs); s++) {
-        uintptr_t src = cvta_to_global(srcPtrFn(s)) + threadBytesBehind;
-        // Yes, for some template arguments this code will be unreachable.  That's fine.
-        // coverity[dead_error_line]
-        #pragma unroll Unroll
-        for (int u=0; u < Unroll; u++) {
-          // Use volatile loads in case credits are polled for with volatile (instead of acquire).
-          acc2[s][u] = ld_volatile_global<BytePerPack>(src);
-          src += WARP_SIZE*BytePerPack;
-        }
-      }
-
       #pragma unroll
       for (int s=0; s < MinSrcs; s++) {
         minSrcs[s] += (nWarps-1)*BytePerHunk;
@@ -431,55 +402,9 @@ __device__ __forceinline__ void reduceCopyPacks(
   }
   
   if(tailProcess) {
-    for (int s=0; s < MinSrcs; s++) {
-      RedFn preFn(s < PreOpSrcs ? preOpArgs[s] : 0);
-      #pragma unroll Unroll
-      for (int u=0; u < Unroll; u++) {
-        // coverity[dead_error_line]
-        if (s < PreOpSrcs) acc2[s][u] = applyPreOp(preFn, acc2[s][u]);
-        if (s > 0) acc2[0][u] = applyReduce(redFn, acc2[0][u], acc2[s][u]);
-      }
-    }
-    for (int s=MinSrcs; (MinSrcs < MaxSrcs) && (s < MaxSrcs) && (s < nSrcs); s++) {
-      RedFn preFn(s < PreOpSrcs ? preOpArgs[s] : 0);
-      #pragma unroll Unroll
-      for (int u=0; u < Unroll; u++) {
-        // Yes, for some template arguments this code will be unreachable.  That's fine.
-        // coverity[dead_error_line]
-        if (s < PreOpSrcs) acc2[s][u] = applyPreOp(preFn, acc2[s][u]);
-        acc2[0][u] = applyReduce(redFn, acc2[0][u], acc2[s][u]);
-      }
-    }
-    if (postOp) {
-      #pragma unroll Unroll
-      for (int u=0; u < Unroll; u++)
-        acc2[0][u] = applyPostOp(redFn, acc2[0][u]);
-    }
-
-    #pragma unroll Unroll
-    for (int d=0; d < MinDsts; d++) {
-      #pragma unroll Unroll
-      // Yes, for some template arguments this code will be unreachable.  That's fine.
-      // coverity[dead_error_begin]
-      for (int u=0; u < Unroll; u++) {
-        // coverity[dead_error_condition]
-        if (d < MultimemDsts) {
-          multimem_st_global(minDsts[d], acc2[0][u]);
-        } else {
-          st_global<BytePerPack>(minDsts[d], acc2[0][u]);
-        }
-        minDsts[d] += WARP_SIZE*BytePerPack;
-      }
-    }
-    for (int d=MinDsts; (MinDsts < MaxDsts) && (d < MaxDsts) && (d < nDsts); d++) {
-      uintptr_t dstPtr = cvta_to_global(dstPtrFn(d));
-      uintptr_t dst = dstPtr + tailThreadBytesBehind;
-      #pragma unroll Unroll
-      for (int u=0; u < Unroll; u++) {
-        st_global<BytePerPack>(dst, acc2[0][u]);
-        dst += WARP_SIZE*BytePerPack;
-      }
-    }
+    reduceAndStore<RedFn, DstPtrFn, IntBytes, MultimemDsts, MinSrcs, MaxSrcs, MinDsts, MaxDsts, PreOpSrcs, Unroll, BytePerPack>(
+      redFn, preOpArgs, acc2, minDsts, postOp, nDsts, dstPtrFn, tailThreadBytesBehind, nSrcs
+    );
   }
   nWarps = nThreads/WARP_SIZE;
   warp = thread/WARP_SIZE;

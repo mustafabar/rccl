@@ -80,9 +80,9 @@ private:
 
   // Don't use barrier 0 as it's used by the final sync
   inline __device__ void barrier() {
-    if (nthreads == WARP_SIZE) 
+    if (nthreads == WARP_SIZE)
       __syncwarp();
-    else 
+    else
       #if defined(__gfx942__) || defined(__gfx950__)
         barrier_generic(__threadfence_block(), nworkers, barrier_next, barriers);
       #else
@@ -133,7 +133,7 @@ private:
     const bool isSendNotRecv = (Send && Recv) ? (flags & RoleWaitSend) : Send;
     // Yes, for some template arguments this code will be unreachable.  That's fine.
     // coverity[dead_error_line]
-    if ((flags & (Recv * RoleWaitRecv)) || (flags & (Send * RoleWaitSend))) {
+    /*if ((flags & (Recv * RoleWaitRecv)) || (flags & (Send * RoleWaitSend))) {
       int spins = 0;
       repeat = 50;
       while (connStepCache + (isSendNotRecv ? NCCL_STEPS : 0) < step + StepPerSlice) {
@@ -147,7 +147,7 @@ private:
         }
       }
       __asm__ __volatile__("s_wakeup");
-    }
+    }*/
 
     if (flags & (Recv*RoleWaitRecv | Send*RoleWaitSend)) {
       if ((flags & ConnFifoEnabled) && (flags & (Send * RoleWaitSend)))
@@ -201,13 +201,13 @@ private:
 
   template<int Recv, int Send>
   inline __device__ void postPeer(bool dataStored) {
-    if (Send && (flags & RolePostSend) && dataStored){
+    /*if (Send && (flags & RolePostSend) && dataStored){
 #ifdef __GFX9__
     gfx9ThreadFence<isOneNodeRingSimple(Metadata) && RCCL_CHEAP_THREADFENCE_OK_SOMETIMES>();
 #else
     __threadfence_system();
 #endif
-    }
+    }*/
 
     if ((flags & Send*RolePostSend) && next_hdp_reg)
       STORE((unsigned int *)next_hdp_reg, 0x1);

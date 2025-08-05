@@ -22,7 +22,7 @@ struct RunWorkBatch<ncclFuncSendRecv, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_SIMPL
     bool useLargeChunk = (work->sendIpcReg && ncclShmem.comm.isAllNvlink) || work->sendNetReg;
     int chunkSize = useLargeChunk ? NCCL_MAX_NET_SIZE : u32fp8Decode(work->sendChunkSize_u32fp8);
     int stepSize = useLargeChunk ? NCCL_MAX_NET_SIZE : ncclShmem.comm.p2pChunkSize;
-  
+
 #if defined(ENABLE_NPKIT)
     bool isNpKitThread = (tid == 0);
     int npKitCtxIdx = blockIdx.x * NCCL_MAX_DEV_WORK_P2P_ELEMENTS + group;
@@ -255,7 +255,7 @@ struct RunWorkBatch<ncclFuncSendRecv, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_SIMPL
 #endif
     } else if (isSend) {
       if (work->sendProtoLL) {
-        runSend<ProtoLL>(subtid, subtn, group, work);
+        runSend<ProtoLL128>(subtid, subtn, group, work);
       } else {
 #if defined(__gfx90a__)
         runSend<ProtoSimple<1,1,8>>(subtid, subtn, group, work);
@@ -267,7 +267,7 @@ struct RunWorkBatch<ncclFuncSendRecv, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_SIMPL
       }
     } else {
       if (work->recvProtoLL) {
-        runRecv<ProtoLL>(subtid, subtn, group, work);
+        runRecv<ProtoLL128>(subtid, subtn, group, work);
       } else {
 #if defined(__gfx90a__)
         runRecv<ProtoSimple<1,1,8>>(subtid, subtn, group, work);

@@ -583,7 +583,7 @@ ncclResult_t ncclIbInit(ncclDebugLogger_t logFunction, ncclProfilerCallback_t pr
         WARN("NET/IB : No IP interface found.");
         ret = ncclInternalError;
         goto fail;
-      }   
+      }
 
       // Check if user defined which IB device:port to use
       const char* userIbEnv = ncclGetEnv("NCCL_IB_HCA");
@@ -1148,7 +1148,7 @@ ncclResult_t ncclIbInitCommDevBase(int ibDevN, struct ncclIbNetCommDevBase* base
   pthread_mutex_unlock(&ibDev->lock);
 
   // CQ is sized to accommodate the max SQ + RQ WQE completions. If each SQ WQE could be signaled, then,
-  // for each QP, there can be 2*MAX_REQUESTS completions for SQ and MAX_REQUESTS completions for RQ. 
+  // for each QP, there can be 2*MAX_REQUESTS completions for SQ and MAX_REQUESTS completions for RQ.
   NCCLCHECK(wrap_ibv_create_cq(&base->cq, ibDev->context, 3*MAX_REQUESTS*ncclParamIbQpsPerConn(), cq_context, NULL, 0));
 
   return ncclSuccess;
@@ -1661,7 +1661,7 @@ ib_recv:
   struct ncclIbRecvCommDev* rCommDev;
   struct ncclIbDevInfo* remDevInfo;
   struct ncclIbQp* qp;
-  bool useDmaBuf; 
+  bool useDmaBuf;
 
   mergedDev = ncclIbMergedDevs + lComm->dev;
   rComm->base.nRemDevs = remMeta.ndevs;
@@ -1743,7 +1743,7 @@ ib_recv:
 
   useDmaBuf  = (ncclIbDmaBufSupport(lComm->dev) == ncclSuccess);
   rComm->flushEnabled = ((ncclIbGdrSupport() == ncclSuccess || useDmaBuf)
-                            && (ncclParamIbGdrFlushDisable() == 0)) ? 1 : 0;              
+                            && (ncclParamIbGdrFlushDisable() == 0)) ? 1 : 0;
   for (int i = 0; i < rComm->base.vProps.ndevs; i++) {
     rCommDev = rComm->devs + i;
     ibDev = ncclIbDevs + rCommDev->base.ibDevN;
@@ -2376,6 +2376,7 @@ ncclResult_t ncclIbIrecv(void* recvComm, int n, void** data, size_t* sizes, int*
 }
 
 ncclResult_t ncclIbIflush(void* recvComm, int n, void** data, int* sizes, void** mhandles, void** request) {
+  // printf("IB FLUSH TRIGGERED!!!\n");
   struct ncclIbRecvComm* comm = (struct ncclIbRecvComm*)recvComm;
   int last = -1;
   for (int i=0; i<n; i++) if (sizes[i]) last = i;

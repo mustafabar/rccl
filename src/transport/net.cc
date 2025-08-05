@@ -849,8 +849,8 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
     resources->buffSizes[NCCL_PROTO_SIMPLE] = mapMem->size;
 
     if (proxyState->allocP2pNetLLBuffers) {
-      NCCL_NET_MAP_ADD_POINTER(map, 0, 0 /*p == NCCL_PROTO_LL*/, proxyState->buffSizes[NCCL_PROTO_LL], buffs[NCCL_PROTO_LL]);
-      resources->buffSizes[NCCL_PROTO_LL] = proxyState->buffSizes[NCCL_PROTO_LL];
+      NCCL_NET_MAP_ADD_POINTER(map, 0, 0 /*p == NCCL_PROTO_LL*/, proxyState->buffSizes[NCCL_PROTO_LL128], buffs[NCCL_PROTO_LL128]);
+      resources->buffSizes[NCCL_PROTO_LL128] = proxyState->buffSizes[NCCL_PROTO_LL128];
     }
 
     NCCL_NET_MAP_ADD_POINTER(map, 1, resources->useGdr ? 1 : 0, mapMem->size, buffs[NCCL_PROTO_SIMPLE]);
@@ -1052,8 +1052,8 @@ static ncclResult_t recvProxyConnect(struct ncclProxyConnection* connection, str
   NCCL_NET_MAP_ADD_POINTER(map, 0, 0, sizeof(struct ncclRecvMem), recvMem);
 
   if (proxyState->allocP2pNetLLBuffers) {
-    NCCL_NET_MAP_ADD_POINTER(map, 0, 0 /*devMem*/, proxyState->buffSizes[NCCL_PROTO_LL], buffs[NCCL_PROTO_LL]);
-    resources->buffSizes[NCCL_PROTO_LL] = proxyState->buffSizes[NCCL_PROTO_LL];
+    NCCL_NET_MAP_ADD_POINTER(map, 0, 0 /*devMem*/, proxyState->buffSizes[NCCL_PROTO_LL128], buffs[NCCL_PROTO_LL128]);
+    resources->buffSizes[NCCL_PROTO_LL128] = proxyState->buffSizes[NCCL_PROTO_LL128];
   }
 
   if (map->mems[NCCL_NET_MAP_DEVMEM].size) {
@@ -1244,7 +1244,7 @@ static ncclResult_t sendProxyProgress(struct ncclProxyState* proxyState, struct 
       resources->step = sub->base + sub->nsteps;
       sub->posted = sub->transmitted = sub->done = 0;
       ncclProfilerStartSendProxyOpEvent(s, args);
-      facebook_rccl::addNewProxyOp(proxyState->proxyTrace, sub->traceKey, 
+      facebook_rccl::addNewProxyOp(proxyState->proxyTrace, sub->traceKey,
         sub->traceInfo,  facebook_rccl::ProxyOpType::SEND,
         sub->channelId, sub->nsteps, sub->nbytes, sub->peer);
       if (!sub->reg)
@@ -1306,7 +1306,7 @@ static ncclResult_t sendProxyProgress(struct ncclProxyState* proxyState, struct 
         facebook_rccl::updateProxyOpCounter(
           proxyState->proxyTrace, sub->traceKey,
           facebook_rccl::ProxyCounterTypes::FIFO_SZ_OR_HEAD_CACHE, connFifo[buffSlot].size);
-          
+
         if (connFifo[buffSlot].size != -1 && (*recvTail > tail || p == NCCL_PROTO_LL)) {
           // We have something to receive, let's check if it's completely ready.
           int size = connFifo[buffSlot].size;
@@ -1354,7 +1354,7 @@ static ncclResult_t sendProxyProgress(struct ncclProxyState* proxyState, struct 
               *resources->curr_hdp_reg = 1;
             }
             ncclProfilerRecordProxyOpEventState(s, args, sub->transmitted+args->sliceSteps, sub->transSize, ncclProfilerProxyOpSendRemFifoWait);
-            facebook_rccl::updateProxyOpCounter(proxyState->proxyTrace, sub->traceKey, 
+            facebook_rccl::updateProxyOpCounter(proxyState->proxyTrace, sub->traceKey,
               facebook_rccl::ProxyCounterTypes::KERNEL_COPY_READY, sub->reg ? 1: sub->transmitted + args->sliceSteps);
             // Data is ready, try to send.
             // Coverity complains about the size here as pointing to an out-of-scope temporary.  Which is nonsense,
@@ -1391,7 +1391,7 @@ static ncclResult_t sendProxyProgress(struct ncclProxyState* proxyState, struct 
               sub->profilerSteps++;
               ncclProfilerRecordProxyOpEventState(s, args, sub->transmitted, sub->transSize, ncclProfilerProxyOpSendTransmitted);
               ncclProfilerRecordProxyStepEventState(s, args, transmittedStepId, ncclProfilerProxyStepSendWait);
-              facebook_rccl::updateProxyOpCounter(proxyState->proxyTrace, sub->traceKey, 
+              facebook_rccl::updateProxyOpCounter(proxyState->proxyTrace, sub->traceKey,
                 facebook_rccl::ProxyCounterTypes::TRANSMITTED, sub->transmitted);
               args->idle = 0;
               continue;
@@ -1459,7 +1459,7 @@ static ncclResult_t sendProxyProgress(struct ncclProxyState* proxyState, struct 
           sub->done += args->sliceSteps;
           ncclProfilerStopProxyStepEvent(s, args, doneStepId);
           ncclProfilerRecordProxyOpEventState(s, args, sub->done, sub->transSize, ncclProfilerProxyOpSendDone);
-          facebook_rccl::updateProxyOpCounter(proxyState->proxyTrace, sub->traceKey, 
+          facebook_rccl::updateProxyOpCounter(proxyState->proxyTrace, sub->traceKey,
             facebook_rccl::ProxyCounterTypes::DONE, sub->done);
           if (resources->shared == 0) {
             volatile uint64_t* sendHead = resources->gdcSync ? resources->gdcSync : &resources->sendMem->head;
@@ -1527,7 +1527,7 @@ static ncclResult_t recvProxyProgress(struct ncclProxyState* proxyState, struct 
       sub->regBufferReady = 0;
       for (int i=0; i<groupSize; i++) sub[-i].groupSize = groupSize;
       ncclProfilerStartRecvProxyOpEvent(s, args);
-      facebook_rccl::addNewProxyOp(proxyState->proxyTrace, sub->traceKey, sub->traceInfo,  
+      facebook_rccl::addNewProxyOp(proxyState->proxyTrace, sub->traceKey, sub->traceInfo,
         facebook_rccl::ProxyOpType::RECV, sub->channelId, sub->nsteps, sub->nbytes, sub->peer);
       if (!sub->reg)
         sub->recvMhandle = resources->mhandles[args->protocol];
@@ -1627,7 +1627,7 @@ static ncclResult_t recvProxyProgress(struct ncclProxyState* proxyState, struct 
             sub->profilerSteps++;
             ncclProfilerRecordProxyOpEventState(s+i, args, sub->posted, sub->transSize, ncclProfilerProxyOpRecvPosted);
             ncclProfilerRecordProxyStepEventState(s+i, args, postedStepId, ncclProfilerProxyStepRecvWait);
-            facebook_rccl::updateProxyOpCounter(proxyState->proxyTrace, 
+            facebook_rccl::updateProxyOpCounter(proxyState->proxyTrace,
               sub->traceKey, facebook_rccl::ProxyCounterTypes::POSTED, sub->posted);
           }
           args->idle = 0;

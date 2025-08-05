@@ -892,7 +892,7 @@ static ncclResult_t addP2pToPlan(
         int peerRank = dir ? sendRank : recvRank;
         struct ncclConnector* conn = dir ? &channelPeers[peerRank]->send[connIndex[dir]]
                                          : &channelPeers[peerRank]->recv[connIndex[dir]];
-        protoLL[dir] &= conn->conn.buffs[NCCL_PROTO_LL] != nullptr && !IsArchMatch(comm->topo->nodes[GPU].nodes[0].gpu.gcn, "gfx12");
+        protoLL[dir] &= conn->conn.buffs[NCCL_PROTO_LL128] != nullptr && !IsArchMatch(comm->topo->nodes[GPU].nodes[0].gpu.gcn, "gfx12");
         network[dir] |= conn->transportComm == (dir ? &netTransport.send : &netTransport.recv);
         proxySameProcess[dir] &= conn->proxyConn.sameProcess;
       }
@@ -913,7 +913,7 @@ static ncclResult_t addP2pToPlan(
 
   for (int dir=0; dir < 2; dir++) { // 0=recv, 1=send
     if (bytes[dir] != -1) protoLL[dir] &= bytes[dir] <= thresholdLL;
-    protocol[dir] = protoLL[dir] ? NCCL_PROTO_LL : NCCL_PROTO_SIMPLE;
+    protocol[dir] = protoLL[dir] ? NCCL_PROTO_LL128 : NCCL_PROTO_SIMPLE;
 
     stepSize[dir] = comm->buffSizes[protocol[dir]]/NCCL_STEPS;
     if (protocol[dir] == NCCL_PROTO_SIMPLE) stepSize[dir] = comm->p2pChunkSize;
@@ -927,11 +927,11 @@ static ncclResult_t addP2pToPlan(
     }
 
     chunkDataSize[dir] = chunkSize[dir];
-    if (protocol[dir] == NCCL_PROTO_LL) chunkDataSize[dir] /= 2;
+    if (protocol[dir] == NCCL_PROTO_LL128) chunkDataSize[dir] /= 2;
     chunkDataSize_u32fp8[dir] = u32fp8Encode(chunkDataSize[dir]);
     chunkDataSize[dir] = u32fp8Decode(chunkDataSize_u32fp8[dir]);
     chunkSize[dir] = chunkDataSize[dir];
-    if (protocol[dir] == NCCL_PROTO_LL) chunkSize[dir] *= 2;
+    if (protocol[dir] == NCCL_PROTO_LL128) chunkSize[dir] *= 2;
 
     if (network[dir]) {
       bool pxnUsed = !ncclPxnDisable(comm) && comm->isAllNvlink && comm->maxLocalRanks > 1;
@@ -1025,6 +1025,7 @@ static ncclResult_t addP2pToPlan(
     op->dtype = ncclInt8;
     op->redOp = ncclSum;
     op->protocol = protocol[dir];
+    // if(p2pTasks[dir]) printf("protocol: %d\n", op->protocol);
     op->pattern = dir ? ncclPatternSend : ncclPatternRecv;
     op->chunkSize = chunkSize[dir];
     op->reg = netRegistered[dir];
@@ -1080,9 +1081,9 @@ static ncclResult_t addP2pToPlan(
           proxyOps[dir].nsteps = divUp(partEnd-partBeg, chunkDataSize);
           proxyOps[dir].nbytes = std::min(partEnd-partBeg, chunkDataSize);
         }
-        if (proxyOps[dir].protocol == NCCL_PROTO_LL) {
+        if (proxyOps[dir].protocol == NCCL_PROTO_LL128) {
           proxyOps[dir].nbytes *= 2;
-          proxyOps[dir].nbytes = roundUp(proxyOps[dir].nbytes, sizeof(union ncclLLFifoLine));
+          proxyOps[dir].nbytes = roundUp(proxyOps[dir].nbytes, NCCL_LL128_LINESIZE);
         }
       }
 

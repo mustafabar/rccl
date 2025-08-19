@@ -135,6 +135,37 @@ static_assert(NCCL_LL_CLEAN_MASK % NCCL_STEPS == 0, "Invalid NCCL_LL_CLEAN_MASK 
 #define RCCL_REDOP_SHIFT 12
 #define RCCL_DTYPE_SHIFT 16
 
+struct rcclDevFuncKey {
+  uint64_t coll : 4;
+  uint64_t algo : 4;
+  uint64_t proto : 4;
+  uint64_t devRedOp : 4;
+  uint64_t type : 4;
+  rcclDevFuncKey(int coll, int algo, int proto, int devRedOp, int type) {
+    if (coll == ncclFuncBroadcast) {
+      this->coll = coll   & RCCL_FUNC_ID_MASK;
+      this->proto = proto & RCCL_FUNC_ID_MASK;
+    } else if (coll == ncclFuncSendRecv || coll == ncclFuncAllToAllPivot) {
+      this->coll = coll & RCCL_FUNC_ID_MASK;
+    } else {
+      this->coll = coll & RCCL_FUNC_ID_MASK;
+      this->algo = algo & RCCL_FUNC_ID_MASK;
+      this->proto = proto & RCCL_FUNC_ID_MASK;
+      this->devRedOp = devRedOp & RCCL_FUNC_ID_MASK;
+      this->type = type & RCCL_FUNC_ID_MASK;
+    }
+  }
+  uint64_t as_u64() const {
+    return (coll     << RCCL_COLL_SHIFT)  |
+           (algo     << RCCL_ALGO_SHIFT)  |
+           (proto    << RCCL_PROTO_SHIFT) |
+           (devRedOp << RCCL_REDOP_SHIFT) |
+           (type     << RCCL_DTYPE_SHIFT);
+  }
+};
+
+static_assert(sizeof(rcclDevFuncKey) == 8, "Device function key type must be 8 bytes");
+
 struct ncclConnInfo {
   // Regular comm mechanism
   char *buffs[NCCL_NUM_PROTOCOLS]; // Local for recv, remote for send
@@ -703,22 +734,7 @@ extern std::unordered_map<uint64_t, int> ncclDevFuncNameToId;
 // `ncclDevFuncId()` needs to be in sync with 'all_colls' in generate.py
 inline int ncclDevFuncId(int coll, int devRedOp, int type, int algo, int proto) {
   int row = -1;
-  uint64_t key;
-  // Pack 4-bit fields from right (LSB) to left in order:
-  // coll, algo, proto, devRedOp, type
-  // This logic must be in sync with the key generation logic in generate.py
-  if (coll == ncclFuncBroadcast) {
-    key = ((uint64_t)(coll     & RCCL_FUNC_ID_MASK) << RCCL_COLL_SHIFT ) |
-          ((uint64_t)(proto    & RCCL_FUNC_ID_MASK) << RCCL_PROTO_SHIFT);
-  } else if (coll == ncclFuncSendRecv || coll == ncclFuncAllToAllPivot) {
-    key = ((uint64_t)(coll     & RCCL_FUNC_ID_MASK) << RCCL_COLL_SHIFT );
-  } else {
-    key = ((uint64_t)(coll     & RCCL_FUNC_ID_MASK) << RCCL_COLL_SHIFT ) |
-          ((uint64_t)(algo     & RCCL_FUNC_ID_MASK) << RCCL_ALGO_SHIFT ) |
-          ((uint64_t)(proto    & RCCL_FUNC_ID_MASK) << RCCL_PROTO_SHIFT) |
-          ((uint64_t)(devRedOp & RCCL_FUNC_ID_MASK) << RCCL_REDOP_SHIFT) |
-          ((uint64_t)(type     & RCCL_FUNC_ID_MASK) << RCCL_DTYPE_SHIFT);
-  }
+  uint64_t key = rcclDevFuncKey(coll, algo, proto, devRedOp, type).as_u64();
   auto it = ncclDevFuncNameToId.find(key);
   if (it != ncclDevFuncNameToId.end()) {
     row = it->second;

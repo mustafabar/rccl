@@ -432,9 +432,8 @@ bool validHsaScratchEnvSetting(const char*hsaScratchEnv, int hipRuntimeVersion, 
 
 
 /* PCIe Graph Printing Functions */
-static ncclResult_t int64ToBusIdShort(int64_t id, char* busId) {
+static void int64ToBusIdShort(int64_t id, char* busId) {
   sprintf(busId, "%02lx",(id & 0xff000) >> 12);
-  return ncclSuccess;
 }
 
 static ncclResult_t rcclNetDevToIndex(struct ncclTopoSystem* system, int netDev, int* index) {
@@ -448,33 +447,27 @@ static ncclResult_t rcclNetDevToIndex(struct ncclTopoSystem* system, int netDev,
   return ncclInternalError;
 }
 
-static ncclResult_t rcclGetNicBusId(struct ncclTopoSystem* system, int netDevId, std::string& busId) {
+static void rcclGetNicBusId(struct ncclTopoSystem* system, int netDevId, std::string& busId) {
+  if(netDevId < 0) return;
   char busIdStr[32];
-  if(netDevId < 0) {
-    return ncclInvalidArgument;
-  }
   int netDevIdx = -1;
   rcclNetDevToIndex(system, netDevId, &netDevIdx);
   if(netDevIdx >= 0) {
     int64ToBusIdShort(system->nodes[NET].nodes[netDevIdx].net.busId, busIdStr);
   }
   busId =  std::to_string(netDevId)+ ":[0x" + std::string(busIdStr)+"]";
-  return ncclSuccess;
 }
 
-static ncclResult_t rcclGetGpuBusId(struct ncclTopoSystem* system, int rank, std::string& busId, int localRank = -1) {
+static void rcclGetGpuBusId(struct ncclTopoSystem* system, int rank, std::string& busId, int localRank = -1) {
+  if(rank < 0) return;
   char busIdStr[32] = "";
-  if(rank < 0) {
-    return ncclInvalidArgument;
-  }
   int topoIndex = -1;
   if (ncclTopoRankToIndex(system, rank, &topoIndex, false) == ncclSuccess && topoIndex >= 0) {
     int64ToBusIdShort(system->nodes[GPU].nodes[topoIndex].id, busIdStr);
     busId = std::to_string(rank) + ":[0x" + std::string(busIdStr) + "]";
-    return ncclSuccess;
+  } else {
+    busId = std::to_string(rank)+ ":[remote]";
   }
-  busId = std::to_string(rank)+ ":[remote]";
-  return ncclSuccess;
 }
 
 void rcclLogGraph(struct ncclTopoSystem* system,

@@ -560,23 +560,37 @@ __device__ __forceinline__ void ncclKernelMain(struct ncclDevKernelArgs const* a
       int bytes = sizeof(ncclDevComm);
       static_assert(sizeof(ncclDevComm) <= 16*WARP_SIZE, "ncclDevComm cannot be loaded by a single warp in one insn.");
       copyToShmem16(tid, dst, src, bytes);
-    } break;
-  case 1:
-    { // Get address of channel without incurring indirect load from ncclDevComm::channels
-      void* dst = &ncclShmem.channel;
-      void* src = &((ncclDevCommAndChannels*)ncclShmem.args.comm)->channels[ncclShmem.channelId];
-      int bytes = sizeof(ncclDevChannel);
+
+      void* dst_ = &ncclShmem.channel;
+      void* src_ = &((ncclDevCommAndChannels*)ncclShmem.args.comm)->channels[ncclShmem.channelId];
+      int bytes_ = sizeof(ncclDevChannel);
       static_assert(sizeof(ncclDevChannel) <= 16*WARP_SIZE, "ncclDevChannel cannot be loaded by a single warp in one insn.");
-      copyToShmem16(tid-WARP_SIZE, dst, src, bytes);
-    } break;
-  default:
-    { int subtid = tid - 2*WARP_SIZE;
-      int subtn = tn - 2*WARP_SIZE;
+      copyToShmem16(tid, dst_, src_, bytes);
+
+      int subtid = tid;
+      int subtn = tn;
       // Coverity reports a possible thread divergence due to not all threads participating in the collective.
       // However, the code ensures that the participation is on a per-warp basis.
       // coverity[device_thread_diverged:FALSE]
       loadWorkBatchToShmem(subtid, subtn, args, /*batchIx=*/blockIdx.x);
     } break;
+  // case 1:
+  //   {
+  //     // Get address of channel without incurring indirect load from ncclDevComm::channels
+  //     void* dst = &ncclShmem.channel;
+  //     void* src = &((ncclDevCommAndChannels*)ncclShmem.args.comm)->channels[ncclShmem.channelId];
+  //     int bytes = sizeof(ncclDevChannel);
+  //     static_assert(sizeof(ncclDevChannel) <= 16*WARP_SIZE, "ncclDevChannel cannot be loaded by a single warp in one insn.");
+  //     copyToShmem16(tid-WARP_SIZE, dst, src, bytes);
+  //   } break;
+  // default:
+  //   { int subtid = tid - 2*WARP_SIZE;
+  //     int subtn = tn - 2*WARP_SIZE;
+  //     // Coverity reports a possible thread divergence due to not all threads participating in the collective.
+  //     // However, the code ensures that the participation is on a per-warp basis.
+  //     // coverity[device_thread_diverged:FALSE]
+  //     loadWorkBatchToShmem(subtid, subtn, args, /*batchIx=*/blockIdx.x);
+  //   } break;
   }
 #ifdef ENABLE_COLLTRACE
   if (tid == 0) {

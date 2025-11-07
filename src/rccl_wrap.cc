@@ -424,6 +424,18 @@ void rcclGetMaxNthreads(struct ncclComm* comm, int maxNthreads[]) {
 }
 
 void rcclOptThreadBlockSize(struct ncclComm* comm, struct ncclTaskColl* info, size_t nBytes, int& nThreads) {
+  static int cachedNThreads = -1;
+  if (cachedNThreads == -1) {
+    const char* env = getenv("NCCL_NTHREADS");
+    if (env) {
+      int v = atoi(env);
+      cachedNThreads = (v > 0) ? v : 64;
+    } else {
+      cachedNThreads = 64;
+    }
+  }
+  nThreads = cachedNThreads;
+  return;
   static int maxNthreads[NCCL_NUM_PROTOCOLS] = {0};
   if (maxNthreads[NCCL_PROTO_SIMPLE] == 0) rcclGetMaxNthreads(comm, maxNthreads);
   if (info->algorithm == NCCL_ALGO_TREE) nThreads = maxNthreads[NCCL_PROTO_SIMPLE]; // Tree now uses all threads always.
@@ -455,7 +467,7 @@ ncclResult_t commSetUnrollFactor(struct ncclComm* comm) {
   CUDACHECK(hipGetDeviceProperties(&devProp, comm->cudaDev));
   if(IsArchMatch(devProp.gcnArchName, "gfx950")) {
     if(comm->nNodes == 1)
-      comm->unroll = NCCL_UNROLL_1;
+      comm->unroll = NCCL_UNROLL_4;
     else
       comm->unroll = NCCL_UNROLL_2;
   }

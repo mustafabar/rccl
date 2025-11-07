@@ -721,6 +721,7 @@ ncclResult_t ncclTopoPostset(struct ncclComm* comm, int* firstRanks, int* treePa
   int shared = parent && parent->nvlsSupport  && parent->shareResources;
   int maxChannels;
   int minNchannels, maxNchannels;
+  int duplicateCount = 1;
   NCCLCHECK(ncclCalloc(&ringRecv, nNodes*MAXCHANNELS));
   NCCLCHECKGOTO(ncclCalloc(&ringSend, nNodes*MAXCHANNELS), ret, fail);
   NCCLCHECKGOTO(ncclCalloc(&ringPrev, nranks*MAXCHANNELS), ret, fail);
@@ -809,18 +810,41 @@ ncclResult_t ncclTopoPostset(struct ncclComm* comm, int* firstRanks, int* treePa
                  IsArchMatch(comm->topo->nodes[GPU].nodes[0].gpu.gcn, "gfx950"))
                  ? std::min(comm->topo->nodes[GPU].nodes[0].gpu.cu, MAXCHANNELS) : 2*CHANNEL_LIMIT;
 
-  if (graphs[NCCL_ALGO_RING]->nIntraChannels > 0 || comm->nNodes > 1) {
-    maxChannels = std::min(64, maxChannels);
-  }
+  // if (graphs[NCCL_ALGO_RING]->nIntraChannels > 0 || comm->nNodes > 1) {
+  //   maxChannels = std::min(64, maxChannels);
+  // }
+
+  printf("nChannels:%d\n", nChannels);
+  printf("maxChannels:%d\n", maxChannels);
+
 
   // Duplicate ringPrev/ringNext for ncclBuildRing
-  if (nChannels <= maxChannels/2) memcpy(ringPrev+nChannels*nranks, ringPrev, nChannels*nranks*sizeof(int));
-  if (nChannels <= maxChannels/2) memcpy(ringNext+nChannels*nranks, ringNext, nChannels*nranks*sizeof(int));
+  // if (nChannels <= maxChannels/2)
+  // memcpy(ringPrev+nChannels*nranks, ringPrev, nChannels*nranks*sizeof(int));
+  // if (nChannels <= maxChannels/2)
+  // memcpy(ringNext+nChannels*nranks, ringNext, nChannels*nranks*sizeof(int));
+
+  // memcpy(ringPrev+nChannels*2*nranks, ringPrev, nChannels*nranks*sizeof(int));
+  // memcpy(ringNext+nChannels*2*nranks, ringNext, nChannels*nranks*sizeof(int));
+
+  // memcpy(ringPrev+nChannels*3*nranks, ringPrev, nChannels*nranks*sizeof(int));
+  // memcpy(ringNext+nChannels*3*nranks, ringNext, nChannels*nranks*sizeof(int));
+
+  duplicateCount = maxChannels / nChannels;          // How many full blocks can fit
+  if (duplicateCount > 1) {
+    // Preserve prior intent of up to 4 total copies (original code made 4 blocks when possible).
+    int limit = duplicateCount;
+    for (int dup = 1; dup < limit; ++dup) {
+      memcpy(ringPrev + dup * nChannels * nranks, ringPrev, nChannels * nranks * sizeof(int));
+      memcpy(ringNext + dup * nChannels * nranks, ringNext, nChannels * nranks * sizeof(int));
+    }
+  }
 
   // Get number of channels after duplication
   maxNchannels = std::min((int)ncclMaxNchannels(), maxChannels);
   nc = std::min(maxNchannels/comm->nChannels, nc);
   nc *= comm->nChannels;
+  printf("nc:%d\n", nc);
 
   // Set ring prev/next for my rank
   for (int c=0; c<nChannels; c++) {
@@ -910,7 +934,7 @@ ncclResult_t ncclTopoPostset(struct ncclComm* comm, int* firstRanks, int* treePa
 
   // Create rings array and check all is fine
   NCCLCHECKGOTO(ncclBuildRings(nChannels, rings, comm->rank, comm->nRanks, ringPrev, ringNext), ret, fail);
-
+  printf("comm->nChannels:%d\n", comm->nChannels);
 exit:
   if (ringRecv) free(ringRecv);
   if (ringSend) free(ringSend);

@@ -102,7 +102,7 @@ union ncclLLFifoLine {
   #define WARP_SIZE 32
   #endif
   #if defined (__gfx950__)
-  #define NCCL_MAX_NTHREADS 512
+  #define NCCL_MAX_NTHREADS 64
   #else
   #define NCCL_MAX_NTHREADS 256
   #endif
@@ -115,13 +115,13 @@ union ncclLLFifoLine {
   * and they need to be defined. These __device__ functions will not be called from the host.
   * The host warp size is handled in src/enqueue.cc by calling hipDeviceGetAttributes(). */
   #define WARP_SIZE 32
-  #define NCCL_MAX_NTHREADS 256
+  #define NCCL_MAX_NTHREADS 64
   // Number of named barriers supported by CUDA
   #define NCCL_MAX_GROUPS (NCCL_MAX_NTHREADS/WARP_SIZE)
 #endif
 
-#define MAXCHANNELS 128
-#define CHANNEL_LIMIT 16
+#define MAXCHANNELS 256
+#define CHANNEL_LIMIT 32
 #define NCCL_MAX_LOCAL_RANKS 72
 #define NCCL_MIN_NTHREADS (4*WARP_SIZE)
 #define NCCL_SIMPLE_MAX_NTHREADS NCCL_MAX_NTHREADS
@@ -143,7 +143,7 @@ static_assert(NCCL_LL_CLEAN_MASK % NCCL_STEPS == 0, "Invalid NCCL_LL_CLEAN_MASK 
 #define NCCL_LL128_LINEELEMS (NCCL_LL128_LINESIZE/sizeof(uint64_t))
 #define NCCL_LL128_DATAELEMS (NCCL_LL128_LINEELEMS-1)
 
-#define NCCL_LL128_MAX_NTHREADS 256
+#define NCCL_LL128_MAX_NTHREADS 64
 #define NCCL_LL128_ELEMS_PER_THREAD 28
 
 #define NCCL_LL128_SHMEM_ELEMS_PER_THREAD 8
@@ -348,7 +348,7 @@ inline __device__ int ncclP2pChannelToPart(int nP2pChannels, int base, int chann
 struct alignas(16) ncclDevWorkColl {
   // Running on channels [channelLo..channelHi], hi is inclusive.
   //   nChannels == (channelHi - channelLo) + 1
-  uint32_t channelLo:8, channelHi:8;
+  uint32_t channelLo:16, channelHi:16;
   uint32_t nWarps:8;
   uint32_t redOpArgIsPtr:1, regUsed:1, netRegUsed:1, oneNode:1, direct:2, isOneRPN:1, rcclUseOneSlice:1, gfx9CheapFenceOff:1;
   uint32_t root:30, connIndex:2;
